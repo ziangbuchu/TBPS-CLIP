@@ -1,6 +1,6 @@
-torch==1.13.0
-torchvision==0.14.0
-torchaudio==0.13.0
+torch>=2.2.0
+torchvision>=0.17.0
+torchaudio>=2.2.0
 
 timm==0.6.11
 wandb==0.13.5
@@ -16,3 +16,7 @@ torchmetrics
 matplotlib
 jupyter
 ipykernel
+transformers>=4.44.0
+sentencepiece
+Pillow
+pytest

@@ -20,7 +20,7 @@ from collections import OrderedDict
 
 
 class CLIP(nn.Module):
-    def __init__(self, config, image_encode, text_encode, num_classes=11003, eps=1e-2):
+    def __init__(self, config, image_encode, text_encode, num_classes=11003, eps=1e-2, tokenizer=None):
         super().__init__()
         self.visual = image_encode
         self.encode_text = text_encode
@@ -32,6 +32,7 @@ class CLIP(nn.Module):
         self.config = config
         self.eda = EDA()
         self.eps = eps
+        self._tokenizer = tokenizer
 
         if config.experiment.ss:
             structure = config.experiment.simclr_mlp
@@ -101,12 +102,12 @@ class CLIP(nn.Module):
 
         # MLM
         if self.config.experiment.mlm:
-            text_tokens, mlm_labels = tokenize(texts, context_length=self.config.experiment.text_length,
-                                               mask_type='MLM')
-            text_tokens = text_tokens.to(self.config.device)
+            text_tokens, mlm_labels = self._tokenize(texts, mask_type='MLM')
+            text_tokens = self._move_to_device(text_tokens)
             mlm_labels = mlm_labels.to(self.config.device)
         else:
-            text_tokens = tokenize(texts, context_length=self.config.experiment.text_length).to(self.config.device)
+            text_tokens = self._tokenize(texts)
+            text_tokens = self._move_to_device(text_tokens)
         ids = input['id'].to(self.config.device)
 
         image_features, image_seq_embeddings = self.encode_image(images, return_dense=True)
@@ -258,6 +259,20 @@ class CLIP(nn.Module):
             nn.Linear(mlp_dim, out_dim)
         )
 
+    def _tokenize(self, texts, mask_type=None):
+        if self._tokenizer is not None:
+            return self._tokenizer(texts, self.config.experiment.text_length, mask_type=mask_type)
+        return tokenize(texts, context_length=self.config.experiment.text_length, mask_type=mask_type)
+
+    def _move_to_device(self, data):
+        if hasattr(data, 'to'):
+            return data.to(self.config.device)
+        if isinstance(data, dict):
+            return {k: self._move_to_device(v) for k, v in data.items()}
+        if isinstance(data, (list, tuple)):
+            return type(data)(self._move_to_device(v) for v in data)
+        return data
+
     @property
     def dtype(self):
         try:
@@ -269,7 +284,10 @@ class CLIP(nn.Module):
                 try:
                     return self.visual.stem[0].weight.dtype
                 except:
-                    return self.encode_text.text_projection.weight.dtype
+                    try:
+                        return self.visual.visual_projection.weight.dtype
+                    except:
+                        return self.encode_text.text_projection.weight.dtype
 
     def encode_image(self, image, return_dense=False):
         if return_dense:
