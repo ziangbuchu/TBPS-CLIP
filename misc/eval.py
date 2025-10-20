@@ -1,7 +1,5 @@
 import torch
 import torch.nn.functional as F
-# import clip
-from text_utils.tokenizer import tokenize
 
 
 @torch.no_grad()
@@ -14,11 +12,29 @@ def test(model, data_loader, max_length, device):
     num_text = len(texts)
     text_bs = 256
 
+    # Use model's tokenizer if available, otherwise fall back to default
+    if hasattr(model, '_tokenizer') and model._tokenizer is not None:
+        tokenizer = model._tokenizer
+        use_altclip_tokenizer = True
+    else:
+        from text_utils.tokenizer import tokenize
+        use_altclip_tokenizer = False
+
     text_feats = []
     for i in range(0, num_text, text_bs):
         text = texts[i: min(num_text, i + text_bs)]
-        text = tokenize(text, context_length=max_length).to(device)
-        text_feat = F.normalize(model.encode_text(text), dim=-1)
+        if use_altclip_tokenizer:
+            text_tokens = tokenizer(text, context_length=max_length)
+            # Move all tensors to device
+            if isinstance(text_tokens, dict):
+                text_tokens = {k: v.to(device) if isinstance(v, torch.Tensor) else v
+                              for k, v in text_tokens.items()}
+            else:
+                text_tokens = text_tokens.to(device)
+        else:
+            text_tokens = tokenize(text, context_length=max_length).to(device)
+
+        text_feat = F.normalize(model.encode_text(text_tokens), dim=-1)
         text_feats.append(text_feat)
     text_feats = torch.cat(text_feats, dim=0)
 

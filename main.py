@@ -13,6 +13,8 @@ from misc.utils import parse_config, init_distributed_mode, set_seed, is_master,
 from model.tbps_model import clip_vitb
 from options import get_args
 
+from model.altclip_adapter import build_altclip_clip
+
 
 def run(config):
     print(config)
@@ -22,6 +24,10 @@ def run(config):
     train_loader = dataloader['train_loader']
     num_classes = len(train_loader.dataset.person2text)
 
+    # Add num_classes to config
+    config.model.num_classes = num_classes
+
+    # Initialize meters for tracking losses
     meters = {
         "loss": AverageMeter(),
         "nitc_loss": AverageMeter(),
@@ -35,10 +41,18 @@ def run(config):
     best_epoch = 0
 
     # model
-    model = clip_vitb(config, num_classes)
+    model, tokenizer, processor = build_altclip_clip(config, model_name=config.model.checkpoint)
     model.to(config.device)
 
-    model, load_result = load_checkpoint(model, config)
+    # Load fine-tuned checkpoint if exists
+    checkpoint_path = os.path.join(config.model.saved_path, 'checkpoint_best.pth')
+    if os.path.exists(checkpoint_path):
+        print(f"Loading fine-tuned checkpoint from {checkpoint_path}")
+        ckpt = torch.load(checkpoint_path, map_location='cpu')
+        load_result = model.load_state_dict(ckpt['model'], strict=False)
+        print(f"Checkpoint loaded: {load_result}")
+    else:
+        print("No fine-tuned checkpoint found, using pretrained AltCLIP model")
 
     if is_using_distributed():
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.device],
@@ -54,6 +68,7 @@ def run(config):
     # train
     it = 0
     scaler = torch.cuda.amp.GradScaler()
+
     for epoch in range(config.schedule.epoch):
         print()
         if is_using_distributed():
@@ -122,7 +137,10 @@ def run(config):
             print("Epoch {} done. Time per batch: {:.3f}[s] Speed: {:.1f}[samples/s]"
                   .format(epoch + 1, time_per_batch, train_loader.batch_size / time_per_batch))
 
-            eval_result = test(model.module, dataloader['test_loader'], 77, config.device)
+            # Get the correct model reference (handle distributed training)
+            test_model = model.module if is_using_distributed() else model
+
+            eval_result = test(test_model, dataloader['test_loader'], 77, config.device)
             rank_1, rank_5, rank_10, map = eval_result['r1'], eval_result['r5'], eval_result['r10'], eval_result['mAP']
             print('Acc@1 {top1:.5f} Acc@5 {top5:.5f} Acc@10 {top10:.5f} mAP {mAP:.5f}'.format(top1=rank_1, top5=rank_5,
                                                                                               top10=rank_10, mAP=map))
@@ -131,8 +149,11 @@ def run(config):
                 best_rank_1 = rank_1
                 best_epoch = epoch
 
+                # Get the correct model state dict
+                model_state = test_model.state_dict()
+
                 save_obj = {
-                    'model': model.module.state_dict(),
+                    'model': model_state,
                     'optimizer': optimizer.state_dict(),
                     'config': config,
                 }

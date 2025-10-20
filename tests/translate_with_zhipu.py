@@ -242,10 +242,10 @@ def main():
     parser.add_argument("--output_file", type=str,
                        default="tests/translations/cuhk_test_zh.json",
                        help="Path to output translated file")
-    parser.add_argument("--num_samples", type=int, default=None,
+    parser.add_argument("--num_samples", type=int, default=1000,
                        help="Number of samples to translate (None for all)")
-    parser.add_argument("--max_workers", type=int, default=20,
-                       help="Number of parallel workers (default: 20)")
+    parser.add_argument("--max_workers", type=int, default=1000,
+                       help="Number of parallel workers (default: 1000)")
     parser.add_argument("--test", action="store_true",
                        help="Test with a few samples first")
 

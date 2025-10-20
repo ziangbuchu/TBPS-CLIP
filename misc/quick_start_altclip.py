@@ -1,4 +1,7 @@
-"""Quick start script for running AltCLIP through the TBPS-CLIP training wrapper."""
+"""Quick start script for running AltCLIP through the TBPS-CLIP training wrapper.
+
+Now supports passing a local AltCLIP directory via --altclip_pretrained.
+"""
 
 import os
 import pathlib
@@ -10,6 +13,7 @@ import torch.nn.functional as F
 from easydict import EasyDict
 from PIL import Image
 from transformers import AutoTokenizer
+import argparse
 
 os.environ.setdefault("HF_HUB_DISABLE_AUTO_CONVERSION", "1")
 
@@ -96,13 +100,24 @@ def embedding_sanity_check(model, tokenizer, sentences, device: str):
 
 
 def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    base_tokenizer = AutoTokenizer.from_pretrained("BAAI/AltCLIP")
-    config = build_config(device, vocab_size=base_tokenizer.vocab_size)
-    clip_model, tokenizer, processor = build_altclip_clip(config, device=device)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--altclip_pretrained", type=str, default="BAAI/AltCLIP",
+                        help="Path or HF repo id of AltCLIP (e.g., ./hf_cache/BAAI/AltCLIP)")
+    parser.add_argument("--device", type=str, default=None, help="cuda or cpu device, e.g. cuda:0")
+    parser.add_argument("--image", type=str, default=str(Path("image/intro.png")), help="Test image path")
+    parser.add_argument("--text", nargs="*", default=["a person wearing a red jacket", "一个穿红色夹克的人"],
+                        help="Texts to encode; default includes EN and ZH examples")
+    args = parser.parse_args()
 
-    captions = ["a person wearing a red jacket", "一个穿红色夹克的人"]
-    batch = build_dummy_batch(processor, Path("image/intro.png"), captions, device)
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    base_tokenizer = AutoTokenizer.from_pretrained(args.altclip_pretrained)
+    config = build_config(device, vocab_size=base_tokenizer.vocab_size)
+    clip_model, tokenizer, processor = build_altclip_clip(
+        config, model_name=args.altclip_pretrained, device=device
+    )
+
+    captions = args.text
+    batch = build_dummy_batch(processor, Path(args.image), captions, device)
 
     clip_model.eval()
     with torch.no_grad():

@@ -79,11 +79,11 @@ def load_bilingual_dataset(en_anno_file: str,
     image_root = Path(image_root)
 
     for en_item, zh_item in zip(en_data, zh_data):
-        assert en_item['image'] == zh_item['image'], "Data mismatch!"
-        assert en_item['image_id'] == zh_item['image_id'], "Data mismatch!"
+        assert en_item['file_path'] == zh_item['file_path'], "Data mismatch!"
+        assert en_item['id'] == zh_item['id'], "Data mismatch!"
 
-        image_path = image_root / en_item['image']
-        person_id = en_item['image_id']
+        image_path = image_root / en_item['file_path']
+        person_id = en_item['id']
 
         if not image_path.exists():
             print(f"Warning: Image not found: {image_path}")
@@ -93,7 +93,7 @@ def load_bilingual_dataset(en_anno_file: str,
         img2person.append(person_id)
 
         # Add captions
-        for en_cap, zh_cap in zip(en_item['caption'], zh_item['caption']):
+        for en_cap, zh_cap in zip(en_item['captions'], zh_item['captions']):
             en_captions.append(en_cap)
             zh_captions.append(zh_cap)
             txt2person.append(person_id)
@@ -116,17 +116,18 @@ def load_bilingual_dataset(en_anno_file: str,
 class BilingualTester:
     """Tester for bilingual retrieval."""
 
-    def __init__(self, device: str = None):
+    def __init__(self, device: str = None, altclip_pretrained: str = "BAAI/AltCLIP"):
         """Initialize tester."""
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.altclip_pretrained = altclip_pretrained
         print(f"Using device: {self.device}")
 
         # Load AltCLIP
         print("\nLoading AltCLIP model...")
-        base_tokenizer = AutoTokenizer.from_pretrained("BAAI/AltCLIP")
+        base_tokenizer = AutoTokenizer.from_pretrained(self.altclip_pretrained)
         config = self._build_config(base_tokenizer.vocab_size)
         self.model, self.tokenizer, self.processor = build_altclip_clip(
-            config, device=self.device
+            config, model_name=self.altclip_pretrained, device=self.device
         )
         self.model.eval()
         print("✓ AltCLIP model loaded successfully")
@@ -373,6 +374,8 @@ def main():
                        help="Number of images (None for all in zh_anno)")
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--altclip_pretrained", type=str, default="BAAI/AltCLIP",
+                        help="Path or HF repo id of AltCLIP (e.g., ./hf_cache/BAAI/AltCLIP)")
 
     args = parser.parse_args()
 
@@ -383,7 +386,7 @@ def main():
     )
 
     # Test
-    tester = BilingualTester(device=args.device)
+    tester = BilingualTester(device=args.device, altclip_pretrained=args.altclip_pretrained)
     en_metrics, zh_metrics = tester.test_bilingual(dataset)
 
     print("\n✓ Test completed!")

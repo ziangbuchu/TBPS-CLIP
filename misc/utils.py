@@ -19,7 +19,7 @@ def parse_config(config_path):
 
 
 def is_using_distributed():
-    return True
+    return 'RANK' in os.environ and 'WORLD_SIZE' in os.environ
 
 
 def is_dist_avail_and_initialized():
