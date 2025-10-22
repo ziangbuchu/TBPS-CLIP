@@ -151,7 +151,7 @@ class EDA:
         self.sentence = sentence
         words = sentence.split()
         if len(words) == 1:
-            return words
+            return words[0]  # 修复：返回字符串而不是列表
         new_words = list()
         for word in words:
             r = random.uniform(0, 1)

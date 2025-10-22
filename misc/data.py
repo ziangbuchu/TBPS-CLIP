@@ -116,8 +116,8 @@ def build_pedes_data(config):
     aug = Choose(rand_from, size)
     aug_ss = get_self_supervised_augmentation(size)
 
-    train_dataset = ps_train_dataset(config.anno_dir, config.image_dir, aug, aug_ss, split='train', max_words=77)
-    test_dataset = ps_eval_dataset(config.anno_dir, config.image_dir, val_transform, split='test', max_words=77)
+    text_length = config.experiment.text_length
+    train_dataset = ps_train_dataset(config, aug, split='train', max_words=text_length)
 
     if is_using_distributed():
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -134,19 +134,27 @@ def build_pedes_data(config):
         pin_memory=True,
         sampler=train_sampler,
         drop_last=True,
+        collate_fn=train_dataset.collate_fn,  # Use custom collate function
     )
-    test_loader = DataLoader(
-        dataset=test_dataset,
-        batch_size=32,
-        shuffle=False,
-        sampler=test_sampler,
-        drop_last=False,
-    )
+
+    # Create test loaders for multiple languages
+    lan_list = config.data.languages
+    test_loaders = {}
+    for lan in lan_list:
+        test_dataset = ps_eval_dataset(config, val_transform, split='test', max_words=text_length, lan=lan)
+        test_loader = DataLoader(
+            dataset=test_dataset,
+            batch_size=32,
+            shuffle=False,
+            sampler=test_sampler,
+            drop_last=False,
+        )
+        test_loaders[lan] = test_loader
 
     return {
         'train_loader': train_loader,
         'train_sampler': train_sampler,
-        'test_loader': test_loader,
+        'test_loaders': test_loaders,
     }
 
 

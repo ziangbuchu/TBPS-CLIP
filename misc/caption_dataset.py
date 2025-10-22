@@ -73,12 +73,15 @@ class ps_train_dataset(Dataset):
 
         image_pil = Image.open(image_path)
         image = self.transform(image_pil.convert('RGB'))
+
+        # Return the data with original caption text included
         if self.config.mlm.is_mlm:
             text_ids, text_atts, text_ids_masked, masked_pos, masked_ids = self.preprocess(caption, True)
-            return (image, text_ids, text_atts, text_ids_masked, masked_pos, masked_ids, person)
+            return (image, text_ids, text_atts, text_ids_masked, masked_pos, masked_ids, person, caption, image, image)
         else:
             text_ids, text_atts = self.preprocess(caption, False)
-            return image, text_ids, text_atts, person
+            # Return: image, text_ids, text_atts, person, caption (original text), aug1, aug_ss_1, aug_ss_2
+            return image, text_ids, text_atts, person, caption, image, image, image
 
     def preprocess(self, text, is_mlm):
         tokens = self.tokenizer.tokenize(text)
@@ -119,10 +122,42 @@ class ps_train_dataset(Dataset):
                 batch_tensors.append(None)
             elif isinstance(x[0], torch.Tensor):
                 batch_tensors.append(torch.stack(x))
+            elif isinstance(x[0], str):
+                # Keep strings as list
+                batch_tensors.append(list(x))
             else:
                 batch_tensors.append(torch.tensor(x, dtype=torch.long))
 
-        return batch_tensors
+        # Return dictionary format that model expects
+        if len(batch_tensors) == 8:
+            # Non-MLM mode: (image, text_ids, text_atts, person, caption, aug1, aug_ss_1, aug_ss_2)
+            return {
+                'image': batch_tensors[0],
+                'text_ids': batch_tensors[1],
+                'text_atts': batch_tensors[2],
+                'id': batch_tensors[3],
+                'caption': batch_tensors[4],  # Original text list
+                'caption_bt': batch_tensors[4],  # Use same caption for back translation initially
+                'aug1': batch_tensors[5],
+                'aug_ss_1': batch_tensors[6],
+                'aug_ss_2': batch_tensors[7],
+            }
+        else:
+            # MLM mode: (image, text_ids, text_atts, text_ids_masked, masked_pos, masked_ids, person, caption, aug1, aug2)
+            return {
+                'image': batch_tensors[0],
+                'text_ids': batch_tensors[1],
+                'text_atts': batch_tensors[2],
+                'text_ids_masked': batch_tensors[3],
+                'masked_pos': batch_tensors[4],
+                'masked_ids': batch_tensors[5],
+                'id': batch_tensors[6],
+                'caption': batch_tensors[7],
+                'caption_bt': batch_tensors[7],
+                'aug1': batch_tensors[8],
+                'aug_ss_1': batch_tensors[8],
+                'aug_ss_2': batch_tensors[9],
+            }
 
 
 class ps_eval_dataset(Dataset):

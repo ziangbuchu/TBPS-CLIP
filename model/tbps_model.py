@@ -187,8 +187,9 @@ class CLIP(nn.Module):
             img_log = F.log_softmax(logits_per_image_1, dim=1)
             txt_log = F.log_softmax(logits_per_text_1, dim=1)
             target_log = (sim_targets + self.eps).log()
-            kl_img = F.kl_div(target_log, img_log, log_target=True, reduction='batchmean')
-            kl_txt = F.kl_div(target_log, txt_log, log_target=True, reduction='batchmean')
+            # Fix: Correct KL divergence parameter order (input, target)
+            kl_img = F.kl_div(img_log, target_log, log_target=True, reduction='batchmean')
+            kl_txt = F.kl_div(txt_log, target_log, log_target=True, reduction='batchmean')
             ritc_loss = 0.5 * (kl_img + kl_txt)
             ret['ritc_loss'] = ritc_loss * self.config.experiment.ritc_ratio
 
