@@ -44,7 +44,7 @@ experiment:
   id_ratio: 1.0
 
 schedule:
-  lr: 1.0e-5  # 降低学习率到 1e-5
+  lr: 5.0e-5  # 降低学习率到 1e-5
   epoch: 10  # 训练 10 个 epoch
   epoch_warmup: 1
   lr_start: 1.0e-6

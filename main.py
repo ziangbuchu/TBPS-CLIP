@@ -16,7 +16,7 @@ from options import get_args
 from model.altclip_adapter import build_altclip_clip
 
 
-def run(config):
+def run(config, args):
     print(config)
 
     # data
@@ -39,20 +39,15 @@ def run(config):
     }
     best_rank_1 = 0.0
     best_epoch = 0
+    start_epoch = 0
+
+    # Early stopping
+    patience = 3  # Stop if no improvement for 3 epochs
+    patience_counter = 0
 
     # model
     model, tokenizer, processor = build_altclip_clip(config, model_name=config.model.checkpoint)
     model.to(config.device)
-
-    # Load fine-tuned checkpoint if exists
-    checkpoint_path = os.path.join(config.model.saved_path, 'checkpoint_best.pth')
-    if os.path.exists(checkpoint_path):
-        print(f"Loading fine-tuned checkpoint from {checkpoint_path}")
-        ckpt = torch.load(checkpoint_path, map_location='cpu')
-        load_result = model.load_state_dict(ckpt['model'], strict=False)
-        print(f"Checkpoint loaded: {load_result}")
-    else:
-        print("No fine-tuned checkpoint found, using pretrained AltCLIP model")
 
     if is_using_distributed():
         local_rank = int(os.environ.get('LOCAL_RANK', 0))
@@ -70,15 +65,51 @@ def run(config):
     # optimizer
     optimizer = build_optimizer(config, model)
 
+    # Load checkpoint for resume training
+    checkpoint_path = os.path.join(config.model.saved_path, 'checkpoint_best.pth')
+    if args.resume and os.path.exists(checkpoint_path):
+        print(f"Resuming training from checkpoint: {checkpoint_path}")
+        ckpt = torch.load(checkpoint_path, map_location='cpu')
+
+        # Load model state
+        if is_using_distributed():
+            model.module.load_state_dict(ckpt['model'], strict=False)
+        else:
+            model.load_state_dict(ckpt['model'], strict=False)
+
+        # Load optimizer state
+        if 'optimizer' in ckpt:
+            optimizer.load_state_dict(ckpt['optimizer'])
+
+        # Load training state
+        if 'epoch' in ckpt:
+            start_epoch = ckpt['epoch'] + 1
+        if 'best_rank_1' in ckpt:
+            best_rank_1 = ckpt['best_rank_1']
+            best_epoch = ckpt.get('epoch', 0)
+        if 'patience_counter' in ckpt:
+            patience_counter = ckpt['patience_counter']
+
+        print(f"Resumed from epoch {start_epoch}, best Acc@1: {best_rank_1:.5f}, patience: {patience_counter}/{patience}")
+    elif os.path.exists(checkpoint_path) and not args.resume:
+        print(f"Checkpoint exists but --resume not specified. Starting fresh training.")
+        print("Use --resume flag to continue from checkpoint.")
+    else:
+        print("No checkpoint found, starting fresh training with pretrained AltCLIP model")
+
     # train
     it = 0
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     # For ETA calculation
     epoch_times = []
     training_start_time = time.time()
 
-    for epoch in range(config.schedule.epoch):
+    # Restore iteration counter for resume training
+    if args.resume and os.path.exists(checkpoint_path):
+        it = start_epoch * len(train_loader)
+
+    for epoch in range(start_epoch, config.schedule.epoch):
         print()
         if is_using_distributed():
             dataloader['train_sampler'].set_epoch(epoch)
@@ -127,8 +158,7 @@ def run(config):
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            model.zero_grad()
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)  # More efficient than zero_grad()
             it += 1
 
             if (i + 1) % config.log.print_period == 0:
@@ -219,6 +249,7 @@ def run(config):
             if best_rank_1 < avg_rank_1:
                 best_rank_1 = avg_rank_1
                 best_epoch = epoch
+                patience_counter = 0  # Reset patience counter
 
                 # Get the correct model state dict
                 model_state = test_model.state_dict()
@@ -227,8 +258,20 @@ def run(config):
                     'model': model_state,
                     'optimizer': optimizer.state_dict(),
                     'config': config,
+                    'epoch': epoch,
+                    'best_rank_1': best_rank_1,
+                    'patience_counter': patience_counter,
                 }
                 torch.save(save_obj, os.path.join(config.model.saved_path, 'checkpoint_best.pth'))
+            else:
+                patience_counter += 1
+                print(f"No improvement for {patience_counter} epoch(s). Patience: {patience}/{patience}")
+
+            # Early stopping check
+            if patience_counter >= patience:
+                print(f"\nEarly stopping triggered after {patience} epochs without improvement.")
+                print(f"Best Acc@1: {best_rank_1:.5f} at epoch {best_epoch + 1}")
+                break
 
     # Print final statistics
     total_training_time = time.time() - training_start_time
@@ -241,8 +284,15 @@ def run(config):
     print(f"Best Acc@1: {best_rank_1:.5f} at epoch {best_epoch + 1}")
     print("="*50)
 
+    # Cleanup distributed training
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
+
 
 if __name__ == '__main__':
+    # Disable tokenizers parallelism warning
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
     config_path = 'config/config.yaml'
 
     args = get_args()
@@ -256,4 +306,4 @@ if __name__ == '__main__':
 
     set_seed(config)
 
-    run(config)
+    run(config, args)
